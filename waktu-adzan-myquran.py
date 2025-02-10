@@ -1,10 +1,13 @@
 import obspython as obs
 import urllib.request
 import urllib.error
+from urllib.request import Request, urlopen
+
 import json
 import datetime
 # Variabel Global
-url = "https://api.aladhan.com/v1/timingsByCity?city=Jakarta&country=Indonesia&method=20"
+url = "https://api.myquran.com/v2/sholat/jadwal/idkota/yyyy-mm-dd"
+url_city = "https://api.myquran.com/v2/sholat/kota/semua"
 interval  = 1000
 source_names = {
     "Subuh": "Text_Time_Subuh",
@@ -19,31 +22,41 @@ source_names = {
     "Nama_Adzan_Selanjutnya": "Text_Nama_Adzan_Selanjutnya",
     "Waktu_Adzan_Selanjutnya": "Text_Waktu_Adzan_Selanjutnya",
 }
-city = "Bandung"
-country = "Indonesia"
-method = 20 # Metode perhitungan (20 = Kemenag)
+id_lokasi = 1219 # Bandung
 adzan_timings = {}
 hari_ini = {}
 error_value = "Tidak tersedia"
 next_adzan = {}
+loading = "Loading..."
 
 def script_description():
     text = """
-    <h1>Jadwal Adzan</h1><br>
+    <h1>Jadwal Adzan Indonesia</h1><br>
     Ini adalah script untuk menampilkan jadwal adzan di OBS<br>
-    <a href='https://api.aladhan.com'>API Aladhan</a> (Api yang digunakan pada script ini)<br>
+    <a href='https://api.myquran.com/'>API My Quran</a> (Api yang digunakan pada script ini)<br>
     <a href='https://www.linkedin.com/in/tio-haidar-aa92781a2/' >Linkedin saya</a>
     Code By Tio Haidar Hanif
-
     """;
     return  text
 
 def script_properties():
     global source_names 
     props = obs.obs_properties_create()
-    obs.obs_properties_add_text(props, "country", "Negara", obs.OBS_TEXT_DEFAULT)
-    obs.obs_properties_add_text(props, "city", "Kota", obs.OBS_TEXT_DEFAULT)
-    obs.obs_properties_add_int(props, "method", "Metode Perhitungan", 1, 99, 1)
+    p_kota = obs.obs_properties_add_list(props, "city", "Kabupaten/Kota", obs.OBS_COMBO_TYPE_LIST , obs.OBS_COMBO_FORMAT_STRING)
+    try:
+        request_site = Request(url_city, headers={"User-Agent": "Mozilla/5.0"})
+
+        with urllib.request.urlopen(request_site) as response:
+            
+            data = response.read()
+            result = json.loads(data)
+            for kota in result["data"]:
+                obs.obs_property_list_add_string(p_kota, kota["lokasi"], kota["id"])
+
+    except urllib.error.URLError  as err:
+        obs.script_log(obs.LOG_WARNING, f"Error opening URL '{url_city}': {err.reason}")
+        obs.remove_current_callback()
+    
     obs.obs_properties_add_int(props, "interval", "Interval Refresh Sumber", 1, 100000, 1)
     obs.obs_properties_add_button(props, "refresh_data_adzan", "Refresh", refresh_data_adzan)
 
@@ -65,19 +78,16 @@ def script_properties():
     return props
 
 def script_defaults(settings):
-    obs.obs_data_set_default_string(settings, "country", country)
-    obs.obs_data_set_default_string(settings, "city", city)
-    obs.obs_data_set_default_int(settings, "method", method)
+    obs.obs_data_set_default_string(settings, "city", "KOTA BANDUNG")
     obs.obs_data_set_default_int(settings, "interval", interval)
-    # for source_key in source_names.keys():
-        # obs.obs_data_set_default_string(settings, source_names[source_key], source_names[source_key])
+    for source_key in source_names.keys():
+        obs.obs_data_set_default_string(settings, source_names[source_key], source_names[source_key])
     
 def script_update(settings):
     # nge ambil inputan user di properti
-    global country, city, method, interval, source_names
-    country = obs.obs_data_get_string(settings, "country")
-    city = obs.obs_data_get_string(settings, "city")
-    method = obs.obs_data_get_int(settings, "method")
+    global id_lokasi, interval, source_names
+    id_lokasi = obs.obs_data_get_string(settings, "city")
+    print("id_lokasi", id_lokasi)
     interval = obs.obs_data_get_int(settings, "interval")
     for source_key, source_name in source_names.items():
         print(f"source_key: {source_key}, source_name: {source_name}")
@@ -99,7 +109,7 @@ def generate_source_adzan(props, prop):
         source = obs.obs_get_source_by_name(source_name)
         if source:
             settings = obs.obs_source_get_settings(source)
-            obs.obs_data_set_string(settings, "text", "Loading...")
+            obs.obs_data_set_string(settings, "text", loading)
             obs.obs_source_update(source, settings)
             obs.obs_data_release(settings)
             obs.obs_source_release(source)
@@ -139,29 +149,29 @@ def update_property_value(source_key, source_name, props):
     obs.obs_data_release(settings)  # Bersihkan data settings
 
 def fetch_data_adzan():
-    global url, city, country, method, hari_ini, adzan_timings
+    global url, id_lokasi ,hari_ini, adzan_timings
     # jika hari ini lebih dari waktu isya, maka ambil data esok hari
-    if datetime.datetime.now().time() > datetime.datetime.strptime(adzan_timings.get("Isha", "23:59"), "%H:%M").time():
+    today = datetime.date.today()
+    if datetime.datetime.now().time() > datetime.datetime.strptime(adzan_timings.get("isya", "23:59"), "%H:%M").time():
         # Ambil tanggal hari ini
-        today = datetime.date.today()
-
 # Tambah 1 hari untuk mendapatkan tanggal besok
         tomorrow = today + datetime.timedelta(days=1)
-
-# Format ke "dd-mm-yyyy"
-        tanggal_besok = tomorrow.strftime("%d-%m-%Y")
+# Format ke "yyyy-mm-dd"
+        tanggal_besok = tomorrow.strftime("%Y-%m-%d")
         print("Make nya di tanggal")
-        url = f"https://api.aladhan.com/v1/timingsByCity/{tanggal_besok}?city={city}&country={country}&method={method}"
+        url = f"https://api.myquran.com/v2/sholat/jadwal/{id_lokasi}/{tanggal_besok}"
     else:
-        url = f"https://api.aladhan.com/v1/timingsByCity?city={city}&country={country}&method={method}"
+        tanggal_hari_ini = today.strftime("%Y-%m-%d")
+        url = f"https://api.myquran.com/v2/sholat/jadwal/{id_lokasi}/{tanggal_hari_ini}"
     try:
         # with itu untuk membuka file, dan otomatis menutupnya ketika sudah selesai
-        with urllib.request.urlopen(url) as response:
+        request_site = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(request_site) as response:
             data = response.read()
             result = json.loads(data)
-            hari_ini["hijriah"] = result["data"]["date"]["hijri"]["day"] + " " + result["data"]["date"]["hijri"]["month"]["en"] + " " + result["data"]["date"]["hijri"]["year"]
-            hari_ini["masehi"] = datetime.datetime.strptime(result["data"]["date"]["readable"], "%d %b %Y").strftime("%d %b %Y")
-            adzan_timings = result["data"]["timings"]
+            hari_ini["hijriah"] = "belum ada"# result["data"]["date"]["hijri"]["day"] + " " + result["data"]["date"]["hijri"]["month"]["en"] + " " + result["data"]["date"]["hijri"]["year"]
+            hari_ini["masehi"]  = today.strftime("%d %B %Y")
+            adzan_timings = result["data"]["jadwal"]
             print("Data jadwal adzan berhasil diambil dari API.\n" + url)
     except urllib.error.URLError as err:
         obs.script_log(obs.LOG_WARNING, f"Error opening URL '{url}': {err.reason}")
@@ -173,10 +183,10 @@ def get_next_adzan():
     global adzan_timings, next_adzan
     now = datetime.datetime.now().time()
     #  default nya di set di waktu subuh
-    next_adzan_name = "Fajr"
-    next_adzan_time = datetime.datetime.strptime(adzan_timings.get("Fajr", "23:59"), "%H:%M").time()
+    next_adzan_name = "subuh"
+    next_adzan_time = datetime.datetime.strptime(adzan_timings.get("subuh", "23:59"), "%H:%M").time()
     for name, time_str in adzan_timings.items():
-        if name in ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]:
+        if name in ["subuh", "dzuhur", "ashar", "maghrib", "isya"]:
             adzan_time = datetime.datetime.strptime(time_str, "%H:%M").time()
             if adzan_time > now:
                 # karena udah urut, jadi langsung aja ini nilai nya
@@ -196,11 +206,11 @@ def update_adzan_text():
     fetch_data_adzan()
     get_next_adzan()
     sources = {
-        "Subuh": adzan_timings.get("Fajr", error_value),
-        "Dzuhur": adzan_timings.get("Dhuhr", error_value),
-        "Ashar": adzan_timings.get("Asr", error_value),
-        "Maghrib": adzan_timings.get("Maghrib", error_value),
-        "Isya": adzan_timings.get("Isha", error_value),
+        "Subuh": adzan_timings.get("subuh", error_value),
+        "Dzuhur": adzan_timings.get("dzuhur", error_value),
+        "Ashar": adzan_timings.get("ashar", error_value),
+        "Maghrib": adzan_timings.get("maghrib", error_value),
+        "Isya": adzan_timings.get("isya", error_value),
         "Hijriah": hari_ini.get("hijriah", error_value),
         "Masehi": hari_ini.get("masehi",error_value) ,
     }
@@ -213,7 +223,7 @@ def update_adzan_text():
         if source and source_key in sources:
             settings = obs.obs_source_get_settings(source)
             # karena bakal di looping terus, jadi yang datanya ga di olah disini jadi loading aja
-            obs.obs_data_set_string(settings, "text", sources.get(source_key, "Loading..."))
+            obs.obs_data_set_string(settings, "text", sources.get(source_key, loading))
             obs.obs_source_update(source, settings)
             obs.obs_data_release(settings)
             obs.obs_source_release(source)
@@ -231,7 +241,7 @@ def update_adzan_time():
         if source and source_key in sources:
             settings = obs.obs_source_get_settings(source)
             try:
-                obs.obs_data_set_string(settings, "text", sources.get(source_key, "Loading..."))
+                obs.obs_data_set_string(settings, "text", sources.get(source_key, loading))
             except:
                 print("error", source_key)
             obs.obs_source_update(source, settings)
